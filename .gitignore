@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+temp/
+*.log
+
+# Large outputs (optional)
+data/outputs/
+
+# HuggingFace cache (important)
+.cache/
+
+contract_clause_classifier/
