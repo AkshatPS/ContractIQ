@@ -21,3 +21,4 @@ temp/
 
 .idea/
 contract_clause_classifier/
+vectorstore/
