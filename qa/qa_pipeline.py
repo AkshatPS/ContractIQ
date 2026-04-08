@@ -1,78 +1,97 @@
 import os
+import json
 import ollama
-
-from pipelines.contract_pipeline import run_pipeline
-from qa.vector_manager import create_vectorstore, load_vectorstore, vectorstore_exists
-from config import VECTORSTORE_DIR
-from utils.file_handler import get_filename
+from features.qa_system import QASystem
 
 
-def initialize_document(pdf_path):
+class QAPipeline:
+    def __init__(self, json_path, full_text_pages):
 
-    doc_id = get_filename(pdf_path)
-    vector_path = os.path.join(VECTORSTORE_DIR, doc_id)
+        self.json_path = json_path
+        self.doc_name = os.path.basename(json_path)
 
-    if vectorstore_exists(doc_id):
-        print("[INFO] Vector store exists. Loading...")
-        return load_vectorstore(doc_id)
+        with open(json_path, "r", encoding="utf-8") as f:
+            self.json_data = json.load(f)
 
-    print("[INFO] Running contract pipeline...")
-    data = run_pipeline(pdf_path)
+        self.qa_system = QASystem(
+            json_data=self.json_data,
+            doc_name=self.doc_name
+        )
 
-    classified = data["classified_clauses"]
+        self.qa_system.initialize(full_text_pages)
 
-    docs = []
+    def llm(self, prompt):
+        response = ollama.chat(
+            model="llama3",
+            messages=[{"role": "user", "content": prompt}],
+            options={
+                "num_predict": 400,
+                "temperature": 0.1
+            }
+        )
+        return response['message']['content']
 
-    for label, clauses in classified.items():
+    def format_page_info(self, page_results):
+        ranges = []
+        for p in page_results:
+            ranges.append(f"{p['page_start']}-{p['page_end']}")
 
-        for clause in clauses:
-            docs.append({
-                "text": clause,
-                "metadata": {
-                    "type": "clause",
-                    "clause_type": label
-                }
-            })
+        return ", ".join(ranges)
 
-    print(f"[INFO] Total docs for embedding: {len(docs)}")
+    def answer_question(self, question):
 
-    db = create_vectorstore(docs, doc_id)
+        context, clause_results, page_results = self.qa_system.get_context(question)
 
-    return db
+        page_info = self.format_page_info(page_results)
 
+        prompt = f"""
+        You are an expert legal contract analyst.
+        
+        STRICT INSTRUCTIONS:
+        - Answer ONLY using the provided context
+        - Perform reasoning across multiple clauses if needed
+        - Combine information where necessary
+        - Do NOT hallucinate
+        - If information is missing, clearly say so
+        
+        STYLE RULES:
+        - Write in a clear, professional paragraph
+        - Do NOT use bullet points
+        - Do NOT use colons or semicolons
+        - Use complete sentences
+        - Ensure the answer ends properly (no truncation)
+        
+        
+        CONTEXT:
+        {context}
+        
+        QUESTION:
+        {question}
+        
+        ANSWER:
+        """
 
-def ask_question(db, question):
+        answer = self.llm(prompt)
 
-    docs = db.similarity_search(question, k=5)
+        return answer
 
-    if not docs:
-        return "The document does not contain relevant information."
+    def debug_question(self, question):
 
-    context = "\n\n".join([d.page_content for d in docs])
+        context, clause_results, page_results = self.qa_system.get_context(question)
 
-    context = context[:8000]
+        print("\n===== DEBUG INFO =====")
+        print("Question:", question)
 
-    prompt = f"""
-    You are a legal assistant.
+        print("\nTop Clauses:")
+        for c in clause_results:
+            print(f"[{c['label']}] {c['text'][:150]}...")
 
-    Answer the question using ONLY the provided context.
+        print("\nTop Pages:")
+        for p in page_results:
+            print(f"Pages {p['page_start']}-{p['page_end']}")
 
-    Rules:
-    - Do NOT hallucinate
-    - If answer is not explicitly stated, say: "The document does not contain this information."
-    - Answer clearly and concisely
-    - Use complete sentences
+        print("\nContext Used:\n", context[:2000])
+        print("======================\n")
 
-    Context:
-    {context}
-
-    Question:
-    {question}
-    """
-
-    response = ollama.chat(
-        model="llama3",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return response["message"]["content"]
+        answer = self.answer_question(question)
+        print("Answer:\n", answer)

@@ -13,12 +13,11 @@ from config import CLASSIFIED_DIR, MODEL_PATH
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-tokenizer.save_pretrained(MODEL_PATH)
-# tokenizer = RobertaTokenizer.from_pretrained(MODEL_PATH)
+tokenizer = RobertaTokenizer.from_pretrained(MODEL_PATH)
 model = RobertaForSequenceClassification.from_pretrained(MODEL_PATH)
 model.to(device)
 model.eval()
-LLM_MODEL = "phi3:mini"
+LLM_MODEL = "llama3"
 
 with open(f"{MODEL_PATH}/label_mapping.json", "r") as f:
     maps = json.load(f)
@@ -28,15 +27,15 @@ id2label = {int(k): v for k, v in maps["id2label"].items()}
 
 print("[INFO] Classifier loaded successfully")
 
-def extract_text(pdf):
 
+def extract_text(pdf):
     print("\n[STEP 1] Extracting text from PDF...")
 
     doc = fitz.open(pdf)
     text = []
 
     for i, page in enumerate(doc):
-        print(f"[PDF] Reading page {i+1}/{len(doc)}")
+        print(f"[PDF] Reading page {i + 1}/{len(doc)}")
         text.append(page.get_text())
 
     final_text = "\n".join(text)
@@ -45,39 +44,48 @@ def extract_text(pdf):
 
     return final_text
 
+
 def normalize_text(text):
-    text = re.sub(r"-\n", "", text)  # fix broken words
-    text = re.sub(r"\n+", "\n", text)
-    text = re.sub(r"(?<!\.)\n(?!\n)", " ", text)
-    return text
+    text = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    text = re.sub(r"-\n", "", text)
+    text = re.sub(r"\n\s*\(([a-z])\)", r"\n(\1)", text)
+    text = re.sub(r"(?<![.;:])\n(?!\n)", " ", text)
+    text = re.sub(r"\n+", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+
+    return text.strip()
 
 
-
-
-
-def create_chunks(text, chunk_size=8000, overlap=400):
+def create_chunks(text, chunk_size=6000):
+    paragraphs = text.split("\n\n")
     chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
+    current_chunk = ""
+
+    for para in paragraphs:
+        if len(current_chunk) + len(para) > chunk_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = para
+        else:
+            current_chunk += "\n\n" + para if current_chunk else para
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
     return chunks
 
+
 def clean_clause_text(text):
-    # Remove leading numbering ONLY if clearly present
     if not isinstance(text, str):
         text = str(text)
 
     text = re.sub(r"^\s*\d+(\.\d+)?\s*", "", text)
 
-    # Remove leading headings like "Governing Law"
-    text = re.sub(r"^[A-Z][A-Za-z\s]{2,40}:\s*", "", text)
+    text = re.sub(r'^[A-Z][A-Za-z\s,/]{2,40}[\.:]\s*', '', text)
 
     # Normalize spaces
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
+
 
 def deduplicate_clauses(clauses, threshold=95):
     unique = []
@@ -95,10 +103,18 @@ def deduplicate_clauses(clauses, threshold=95):
 
     return unique
 
+
 def clean_parties(parties):
     cleaned = []
 
     for p in parties:
+
+        if isinstance(p, dict):
+            p = p.get("name", "")
+
+        if not isinstance(p, str):
+            p = str(p)
+
         p = p.strip()
         p = re.sub(r'["“”]', '', p)
 
@@ -107,8 +123,8 @@ def clean_parties(parties):
 
     return list(set(cleaned))
 
-def merge_similar_parties(parties, threshold=90):
 
+def merge_similar_parties(parties, threshold=90):
     merged = []
 
     for p in parties:
@@ -138,66 +154,105 @@ def merge_similar_parties(parties, threshold=90):
 
     return merged
 
+
 def extract_json(text):
-    """
-    Robust JSON extractor from messy LLM output
-    """
     if not isinstance(text, str):
         text = str(text)
 
-    # 1. Direct parse
     try:
         return json.loads(text)
     except:
         pass
 
-    # 2. Extract largest JSON block
-    matches = re.findall(r"\{[\s\S]*?\}", text)
+    stack = []
+    start = None
 
-    for match in matches:
-        try:
-            return json.loads(match)
-        except:
-            continue
+    for i, char in enumerate(text):
+        if char == "{":
+            if not stack:
+                start = i
+            stack.append(char)
+        elif char == "}":
+            if stack:
+                stack.pop()
+                if not stack and start is not None:
+                    candidate = text[start:i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except:
+                        pass
 
-    # 3. Try fixing common issues
     try:
-        fixed = text.replace("\n", " ")
+        fixed = text
+
         fixed = re.sub(r",\s*}", "}", fixed)
         fixed = re.sub(r",\s*]", "]", fixed)
+
+        fixed = re.sub(r"(\w+):", r'"\1":', fixed)
+
         return json.loads(fixed)
     except:
         pass
 
-    print("[WARNING] Could not parse JSON from model output.")
+    print("[WARNING] Could not parse JSON")
     return {"parties": [], "clauses": []}
 
 
-
-
-
-
 def process_chunk(chunk, i):
-    print(f"[EXTRACT] Processing chunk {i+1}")
+    print(f"[EXTRACT] Processing chunk {i + 1}")
 
-    prompt = f"""
-        <|system|>
-        You are a professional legal data extractor. Extract information in strict JSON format.
-        <|end|>
-        <|user|>
-        EXTRACT ALL legal clauses and parties from the text below.
-
-        RULES:
-        1. PARTIES: Extract full legal names of entities.
-        2. CLAUSES: Each clause must be a single, complete legal provision. 
-        3. Do NOT include headings or clause numbers.
-        4. Format: {{"parties": ["name1"], "clauses": ["text1", "text2"]}}
-
-        TEXT:
-        {chunk}
-        <|end|>
-        <|assistant|>
-        """
+    prompt = f"""### System:
+    You are a precise legal data extraction engine. Your task is to identify and extract the signing parties and every individual legal clause from the provided contract text.
+    
+    ### Extraction Rules:
+    1. **NO HEADINGS:** Start the clause text immediately with the legal obligation. Delete "WHEREAS", "Section X", or "Heading Title."
+    2. **VERBATIM:** Do not change a single word or character of the body text.
+    3. **JSON ONLY:** Return only valid JSON.
+    4. Clause Definition (STRICT):
+        A clause is a COMPLETE paragraph or section.
+        
+        - If a paragraph contains multiple bullet points (a), (b), (c),
+          KEEP THEM TOGETHER as ONE clause.
+        
+        - NEVER split a paragraph into multiple clauses.
+        
+        - Only split when there is a CLEAR paragraph break or section number change.
+        
+        Each clause must correspond to a visually separable block in the contract.
+    6. **No Merging:** Do not combine continuous short sentences if they represent different obligations.
+    7. **No Headings:** Start the clause text immediately with the legal content. Remove "Section 1.1" or "TERMINATION:". [cite: 97, 98]
+    
+    ### Constraints:
+    1. **Verbatim Extraction:** You must extract the clause text exactly as it appears. Do not summarize, do not paraphrase, and do not truncate the text.
+    2. **No Metadata:** Do not include clause headings (e.g., "Indemnification"), serial numbers (e.g., "Section 4.2"), or bullet point symbols. Extract only the body text of the clause.
+    3. **Format:** Your output must be a single, valid JSON object. No conversational filler, no markdown code blocks, and no introductory text.
+    
+    ### Schema:
+    {{
+      "parties": ["Full legal name of Party 1", "Full legal name of Party 2"],
+      "clauses": ["Full text of clause 1", "Full text of clause 2"]
+    }}
+    
+    Use formatting cues:
+    - Newlines
+    - Numbering (1., 1.1, (a), (i))
+    - Bullet points
+    - Paragraph spacing
+    
+    These define clause boundaries.
+    
+    IMPORTANT:
+    - If text begins with a lead sentence followed by (a), (b), (c),
+      treat the ENTIRE block as ONE clause.
+      
+    - Do NOT extract individual bullet points separately.
+    
+    - Preserve logical grouping exactly as in original paragraph.
+    
+    ### User:
+    Extract the parties and clauses from the following contract text:
+    
+    {chunk}"""
 
     try:
         max_retries = 2
@@ -215,18 +270,26 @@ def process_chunk(chunk, i):
             raw = response["response"]
             data = extract_json(raw)
 
-            # Check if valid
-            if data.get("clauses") or data.get("parties"):
-                break
+            if isinstance(data, dict) and "clauses" in data and "parties" in data:
+                if isinstance(data["clauses"], list) and isinstance(data["parties"], list):
+                    break
 
             print(f"[RETRY] Chunk {i + 1} retry {attempt + 1}")
 
-        # fallback
         if not data:
             data = {"parties": [], "clauses": []}
 
         clauses = data.get("clauses") or []
         parties = data.get("parties") or []
+
+        normalized_parties = []
+        for p in parties:
+            if isinstance(p, dict):
+                p = p.get("name", "")
+            if isinstance(p, str):
+                normalized_parties.append(p)
+
+        parties = normalized_parties
 
         cleaned_clauses = []
 
@@ -244,20 +307,20 @@ def process_chunk(chunk, i):
         return clauses, parties
 
     except Exception as e:
-        print(f"[ERROR] Chunk {i+1} failed: {e}")
+        print(f"[ERROR] Chunk {i + 1} failed: {e}")
         return [], []
+
 
 def extract_clauses_llm(text):
     print("\n[STEP 2] Extracting clauses using LLM (Parallelized)")
 
-    chunks = create_chunks(text, chunk_size=8000)
+    chunks = create_chunks(text, chunk_size=6000)
     print(f"[INFO] Total chunks created: {len(chunks)}")
 
     clauses = []
     parties = []
 
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         results = list(executor.map(lambda p: process_chunk(p[1], p[0]), enumerate(chunks)))
 
     for chunk_clauses, chunk_parties in results:
@@ -267,13 +330,13 @@ def extract_clauses_llm(text):
     parties = clean_parties(parties)
     parties = merge_similar_parties(parties)
     clauses = deduplicate_clauses(clauses)
-    clauses = [c for c in clauses if isinstance(c, str) and len(c.strip()) > 15]
+    clauses = [c for c in clauses if isinstance(c, str) and len(c.split()) >= 8]
 
     print(f"\n[INFO] Total clauses collected: {len(clauses)}")
     return parties, clauses
 
-def classify_clauses(clauses):
 
+def classify_clauses(clauses):
     print("\n[STEP 4] Classifying clauses")
 
     results = {}
@@ -282,15 +345,13 @@ def classify_clauses(clauses):
 
     for idx, clause in enumerate(clauses):
 
-        print(f"[CLASSIFY] Clause {idx+1}/{len(clauses)}")
+        print(f"[CLASSIFY] Clause {idx + 1}/{len(clauses)}")
 
-        # Convert to string safely
         if not isinstance(clause, str):
             clause = str(clause)
 
         clause = clause.strip()
 
-        # Skip empty clauses
         if not clause:
             print(f"[SKIP] Empty clause at index {idx}")
             continue
@@ -339,8 +400,8 @@ def classify_clauses(clauses):
 
     return results
 
-def run_pipeline(pdf_path):
 
+def run_pipeline(pdf_path):
     os.makedirs(CLASSIFIED_DIR, exist_ok=True)
 
     if not os.path.exists(pdf_path):
@@ -349,7 +410,6 @@ def run_pipeline(pdf_path):
     filename = os.path.splitext(os.path.basename(pdf_path))[0]
     json_output_path = os.path.join(CLASSIFIED_DIR, f"{filename}.json")
 
-    # CACHE
     if os.path.exists(json_output_path):
         print("[INFO] Using cached JSON")
         with open(json_output_path, "r", encoding="utf-8") as f:

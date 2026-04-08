@@ -41,7 +41,6 @@ def clean_summary(summary):
     if ":" in summary:
         summary = summary.split(":", 1)[1]
 
-    # Remove common LLM prefixes
     summary = re.sub(
         r"^(here\s*(is|'s)?\s*(a|the)?\s*summary\s*(of)?[:\-]?\s*)",
         "",
@@ -56,7 +55,6 @@ def clean_summary(summary):
         flags=re.IGNORECASE
     )
 
-    # Fix leading "of"
     summary = re.sub(r"^of\s+", "", summary, flags=re.IGNORECASE)
 
     summary = summary.replace("*", "")
@@ -71,19 +69,27 @@ def process_summary_chunk(chunk, i, parties_text):
     You are a professional legal analyst.
 
     Task:
-    Write a clear, concise executive summary of the contract.
+    Write a clear executive summary of the contract in a SINGLE natural paragraph.
 
-    Instructions:
-    - Start directly with the content (DO NOT write phrases like "Here is a summary")
-    - Write in complete sentences
-    - Maintain formal legal tone
-    - Do NOT add any information not present in the clauses
+    STRICT RULES:
+    - Write in plain English paragraph form
+    - Do NOT use colons (:)
+    - Do NOT use semicolons (;)
+    - Do NOT use bullet points or lists
+    - Use complete sentences only
+    - Ensure the paragraph flows naturally
 
-    Focus on:
-    - obligations of each party
-    - rights of each party
-    - key conditions
-    - termination terms
+    Content requirements:
+    - Include obligations of each party
+    - Include rights of each party
+    - Include key conditions
+    - Include termination terms
+
+    IMPORTANT:
+    - Every sentence must be COMPLETE
+    - Do NOT end mid-sentence
+    - Do NOT truncate
+    - Ensure the final sentence is fully finished
 
     Contract Parties:
     {parties_text}
@@ -96,7 +102,7 @@ def process_summary_chunk(chunk, i, parties_text):
         response = ollama.generate(
             model=LLM_MODEL,
             prompt=prompt,
-            options={"num_predict": 150}
+            options={"num_predict": 400}
         )
 
         return response["response"].strip()
@@ -122,26 +128,38 @@ def hierarchical_summarize(summaries, parties_text, batch_size=5):
             combined = "\n".join(batch)
 
             prompt = f"""
-            You are a legal analyst.
+            You are a professional legal analyst.
 
-            The contract involves:
-            {parties_text}
+            Task:
+            Combine multiple partial contract summaries into ONE final executive summary.
 
-            Combine the following summaries into one final summary.
-
-            Focus on:
-            - obligations
-            - rights
-            - termination
-            - legal implications
-
-            Rules:
+            STRICT RULES:
+            - Write in a SINGLE natural paragraph
+            - Use plain English
+            - Do NOT use colons (:)
+            - Do NOT use semicolons (;)
+            - Do NOT use bullet points or lists
             - Do NOT repeat information
             - Do NOT add new information
-            - Preserve legal meaning
-            - Keep it concise
+            - Preserve full legal meaning
 
-            Summaries:
+            SENTENCE QUALITY:
+            - Every sentence must be COMPLETE
+            - The paragraph must end with a COMPLETE sentence
+            - Do NOT truncate
+            - Ensure smooth logical flow between ideas
+
+            CONTENT TO COVER:
+            - obligations of each party
+            - rights of each party
+            - key conditions
+            - termination or legal implications
+
+            CONTEXT:
+            The contract involves the following parties:
+            {parties_text}
+
+            PARTIAL SUMMARIES:
             {combined}
             """
 
@@ -149,7 +167,7 @@ def hierarchical_summarize(summaries, parties_text, batch_size=5):
                 response = ollama.generate(
                     model=LLM_MODEL,
                     prompt=prompt,
-                    options={"num_predict": 200}
+                    options={"num_predict": 400}
                 )
 
                 new_summaries.append(response["response"].strip())
@@ -158,7 +176,6 @@ def hierarchical_summarize(summaries, parties_text, batch_size=5):
                 print(f"[ERROR] Hierarchical summary failed: {e}")
                 new_summaries.append(combined[:500])
 
-        # Infinite loop protection
         if len(new_summaries) >= prev_len:
             print("[WARNING] No reduction in summaries, stopping hierarchical merge")
             break
@@ -185,7 +202,7 @@ def generate_summary(classified, parties):
     parties_text = ", ".join(parties)
     partial_summaries = []
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         partial_summaries = list(executor.map(
             lambda x: process_summary_chunk(x[1], x[0], parties_text),
             enumerate(chunks)
@@ -261,17 +278,13 @@ def run_contract_brief(pdf_path):
 
     pdf_path_out = os.path.join(REPORTS_DIR, f"{filename}_report.pdf")
 
-    # Pipeline
     data = run_pipeline(pdf_path)
 
     classified = data["classified_clauses"]
     parties = data["parties"]
 
-    # Summary
     summary = generate_summary(classified, parties)
 
-
-    # PDF
     create_pdf(summary, parties, classified, pdf_path_out)
 
     print(f"[SUCCESS] Outputs saved")

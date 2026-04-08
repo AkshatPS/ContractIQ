@@ -1,10 +1,27 @@
-from features.qa_system import run_qa_system
+from qa.qa_pipeline import QAPipeline
+import fitz  # PyMuPDF
 
-pdf_path = "data/inputs/Dummy_thread.pdf"
 
-question = "What are the termination conditions?"
+def extract_pdf_pages(pdf_path):
+    doc = fitz.open(pdf_path)
+    pages = []
 
-answer = run_qa_system(pdf_path, question)
+    for page in doc:
+        text = page.get_text("text")
+        pages.append(text)
 
-print("\nANSWER\n")
+    return pages
+
+
+json_path = "data/outputs/classified/ZogenixInc_20190509_10-Q_EX-10.2_11663313_EX-10.2_Distributor Agreement.json"
+pdf_path = "data/inputs/ZogenixInc_20190509_10-Q_EX-10.2_11663313_EX-10.2_Distributor Agreement.pdf"
+
+full_text_pages = extract_pdf_pages(pdf_path)
+
+qa = QAPipeline(json_path, full_text_pages)
+
+question = "What happens if payment is delayed?"
+answer = qa.answer_question(question)
+
+print("\n===== FINAL ANSWER =====\n")
 print(answer)

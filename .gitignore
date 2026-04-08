@@ -15,10 +15,9 @@ Thumbs.db
 temp/
 *.log
 
-# Large outputs (optional)
-data/outputs/
 
 # HuggingFace cache (important)
 .cache/
 
+.idea/
 contract_clause_classifier/
