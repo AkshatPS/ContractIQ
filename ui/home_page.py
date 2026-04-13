@@ -18,7 +18,6 @@ class HomePage(QWidget):
         main_layout.setContentsMargins(80, 40, 80, 60)
         main_layout.setAlignment(Qt.AlignCenter)
 
-        # --- Header Section ---
         header_container = QVBoxLayout()
 
         title = QLabel("ContractIQ Dashboard")
@@ -44,7 +43,6 @@ class HomePage(QWidget):
         header_container.addWidget(subtitle)
         main_layout.addLayout(header_container)
 
-        # --- Feature Cards Layout ---
         card_layout = QHBoxLayout()
         card_layout.setSpacing(40)
 
@@ -105,7 +103,6 @@ class HomePage(QWidget):
         self.page.show()
         self.close()
 
-    # UPDATED: Removed 'icon' from the parameters
     def create_feature_card(self, title, description, callback):
         """Creates a styled interactive card for the home page dashboard."""
 

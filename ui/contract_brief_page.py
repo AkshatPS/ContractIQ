@@ -46,7 +46,6 @@ class ContractBriefPage(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # --- LEFT PANEL: PDF Viewer Area (70% width) ---
         left_container = QWidget()
         self.pdf_layout = QVBoxLayout(left_container)
         self.pdf_layout.setContentsMargins(0, 0, 0, 0)
@@ -75,7 +74,6 @@ class ContractBriefPage(QWidget):
 
         main_layout.addWidget(left_container, 7)
 
-        # --- RIGHT PANEL: Controls & Logs (30% width) ---
         right_panel = QWidget()
         right_panel.setFixedWidth(350)
         right_layout = QVBoxLayout(right_panel)

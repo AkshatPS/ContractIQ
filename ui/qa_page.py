@@ -9,7 +9,6 @@ from PySide6.QtCore import Qt, QThread, Signal
 from qa.qa_pipeline import QAPipeline
 
 
-# --- WORKER FOR HEAVY INITIALIZATION ---
 class InitWorker(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(object)
@@ -49,7 +48,6 @@ class InitWorker(QThread):
             self.error_signal.emit(traceback.format_exc())
 
 
-# --- WORKER FOR ANSWERING QUESTIONS ---
 class QAWorker(QThread):
     log_signal = Signal(str)
     answer_signal = Signal(str)
@@ -81,7 +79,6 @@ class QAPage(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # --- LEFT PANEL: Chat Interface ---
         left_container = QWidget()
         self.left_layout = QVBoxLayout(left_container)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
@@ -130,7 +127,6 @@ class QAPage(QWidget):
         self.left_layout.addWidget(self.chat_area)
         self.left_layout.addWidget(input_container)
 
-        # --- RIGHT PANEL: Controls ---
         right_panel = QWidget()
         right_panel.setFixedWidth(350)
         right_panel.setStyleSheet("background-color: #380356; border-radius: 15px; padding: 15px;")
@@ -147,7 +143,6 @@ class QAPage(QWidget):
         """)
         self.upload_btn.clicked.connect(self.upload_pdf)
 
-        # FIX for Process Logs Header: Create object then style
         log_header = QLabel("Process Logs:")
         log_header.setStyleSheet("color: white; font-weight: bold; margin-top: 15px;")
 
@@ -209,8 +204,7 @@ class QAPage(QWidget):
         self.add_message(answer, is_user=False)
 
     def add_message(self, text, is_user):
-        # 1. Calculate the 50% split width based on the current window size
-        # We use viewport().width() to account for the scrollbar automatically
+
         view_width = self.chat_area.viewport().width()
 
         # Fallback for initialization phase
@@ -229,11 +223,9 @@ class QAPage(QWidget):
         bubble = QLabel(text)
         bubble.setWordWrap(True)
 
-        # FORCE the width to be exactly 50% to prevent "compression"
         bubble.setFixedWidth(half_width)
 
         if is_user:
-            # USER: Push to the right half
             layout.addStretch(1)  # This takes up exactly 50% of the empty space
             bubble.setStyleSheet("""
                 background-color: #3498db;
@@ -247,7 +239,6 @@ class QAPage(QWidget):
             """)
             layout.addWidget(bubble)
         else:
-            # AI: Occupy the left half
             bubble.setStyleSheet("""
                 background-color: #f0f0f0;
                 color: #2c3e50;

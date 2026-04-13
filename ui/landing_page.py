@@ -22,7 +22,6 @@ class LandingPage(QWidget):
         central_layout.setContentsMargins(100, 20, 100, 50)
         central_layout.setAlignment(Qt.AlignCenter)
 
-        # --- HERO SECTION ---
 
         # Main Title
         title = QLabel("ContractIQ")
@@ -77,7 +76,6 @@ class LandingPage(QWidget):
         """)
         desc_layout.addWidget(desc_text)
 
-        # CTA Button (Light purple with dark text)
         start_btn = QPushButton("Get Started →")
         start_btn.setFixedWidth(280)
         start_btn.setMinimumHeight(60) # Explicit minimum height to prevent "broken" visualization
